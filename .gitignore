@@ -1,0 +1,29 @@
+# API 密钥（绝对不能提交）
+.env
+*.env
+!.env.example
+
+# 知识库数据（本地生成，不应提交）
+kb_data/
+
+# 运行产出
+outputs/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+docs/
+examples/
+.history/
