@@ -145,7 +145,7 @@ if tool_name == "save_prd":
 
 ## License
 
-MIT License — 可自由使用、修改、分发。
+Apache License 2.0 — 可自由使用、修改、分发，需保留版权声明。
 
 ## Contributing
 
