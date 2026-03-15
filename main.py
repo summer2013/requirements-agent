@@ -14,8 +14,9 @@ from datetime import datetime
 
 from agent import run_agent
 from tools.definitions import RESEARCH_TOOLS, DOCUMENT_TOOLS, PROTOTYPE_TOOLS
-from tool_handlers import make_research_handler, make_document_handler, make_prototype_handler
+from tool_handlers import make_research_handler, make_document_handler, make_prototype_handler, make_prototype_handler_v2
 from review_agent import run_review
+from prd_review_agent import run_prd_review, format_review_report
 from knowledge_base import save_project, get_stats
 
 
@@ -131,7 +132,7 @@ def run_layer_one(project_name: str, project_brief: str, output_dir: str = "outp
         return
 
     # ── 阶段 2：PRD 文档 ────────────────────────────────────
-    print("\n▶ 阶段 2/3：生成 PRD")
+    print("\n▶ 阶段 2/4：生成 PRD")
     document_history = []
 
     for attempt in range(max_revisions):
@@ -149,9 +150,24 @@ def run_layer_one(project_name: str, project_brief: str, output_dir: str = "outp
         )
 
         prd = state.get("prd_document", "")
+
+        # ── 阶段 2.5：PRD 自动评审 ──────────────────────────
+        print("\n  ▷ 运行 PRD 评审智能体...")
+        prd_review = run_prd_review(
+            prd_document=prd,
+            interview_notes=state.get("interview_notes", {}),
+        )
+        state["prd_review"] = prd_review
+
+        # 保存评审报告
+        review_report_path = project_dir / "prd_review_report.json"
+        review_report_path.write_text(json.dumps(prd_review, ensure_ascii=False, indent=2))
+        print(f"  ✓ PRD 评审报告已保存：{review_report_path}")
+
+        assessment = prd_review.get("overall_assessment", {})
         approved, feedback = hitl_check(
-            "PRD 评审",
-            f"文档长度：{len(prd)} 字\n前 300 字预览：\n{prd[:300]}...",
+            "PRD + 评审报告确认",
+            format_review_report(prd_review),
         )
 
         if approved:
@@ -160,23 +176,35 @@ def run_layer_one(project_name: str, project_brief: str, output_dir: str = "outp
             print(f"✓ PRD 已保存：{prd_path}")
             break
         else:
+            # 将评审问题和人工反馈合并给文档 agent 修订
+            auto_issues = format_review_report(prd_review)
             document_history.append({
                 "role": "user",
-                "content": f"请根据以下意见修订 PRD：{feedback}"
+                "content": (
+                    f"PRD 评审发现以下问题，请修订：\n{auto_issues}"
+                    + (f"\n\n人工补充意见：{feedback}" if feedback else "")
+                )
             })
     else:
         print("✗ PRD 阶段达到最大修订次数，请人工介入。")
         return
 
     # ── 阶段 3：HTML 原型 ───────────────────────────────────
-    print("\n▶ 阶段 3/3：生成 HTML 原型")
-    handler = make_prototype_handler(state)
+    print("\n▶ 阶段 3/4：生成 HTML 原型")
+    handler = make_prototype_handler_v2(state)
     run_agent(
         agent_name="prototype",
         system_prompt=load_prompt("prototype"),
         tools=PROTOTYPE_TOOLS,
         tool_handler=handler,
-        initial_message="请读取 PRD 并生成完整的单文件 HTML 低保真原型。",
+        initial_message=(
+            "请读取 PRD 和 PRD 评审报告，按照以下步骤生成原型：\n"
+            "1. 先梳理信息架构（页面清单）\n"
+            "2. 确认每个流程都有出口（无死路）\n"
+            "3. 生成 HTML 原型，覆盖所有评审报告中的 missing_scenarios\n"
+            "4. 调用 check_closure 完成闭环自检\n"
+            "5. 确认通过后调用 save_prototype 保存"
+        ),
         model=MODEL_FAST,
         max_tokens=16384,
         temperature=0.2,
@@ -225,12 +253,23 @@ def run_layer_one(project_name: str, project_brief: str, output_dir: str = "outp
     print(f"  知识库当前共有 {stats['total_projects']} 个项目")
 
     # ── 完成 ────────────────────────────────────────────────
+    prd_review = state.get("prd_review", {})
+    closure = state.get("closure_check", {})
     print(f"\n{'='*60}")
     print(f"第一层完成！所有文件已保存到：{project_dir}")
-    print(f"  - interview_notes.json  访谈笔记")
-    print(f"  - prd.md                PRD 文档")
-    print(f"  - prototype.html        可交互原型")
-    print(f"  - review.json           复盘经验（已写入知识库）")
+    print(f"  - interview_notes.json      访谈笔记")
+    print(f"  - prd.md                    PRD 文档")
+    print(f"  - prd_review_report.json    PRD 评审报告")
+    print(f"  - prototype.html            可交互原型")
+    print(f"  - review.json               复盘经验（已写入知识库）")
+    print(f"\n质量快报：")
+    assessment = prd_review.get("overall_assessment", {})
+    print(f"  PRD 评审：Critical {assessment.get('critical_count',0)} / "
+          f"Major {assessment.get('major_count',0)} / "
+          f"Minor {assessment.get('minor_count',0)}")
+    if closure:
+        status = "✅ 通过" if closure.get("passed") else "⚠️  有待处理项"
+        print(f"  原型闭环：{status}")
     print(f"{'='*60}")
     if review.get("lessons_learned"):
         print("\n本次提炼的经验：")

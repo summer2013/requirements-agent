@@ -202,7 +202,10 @@ DOCUMENT_TOOLS = [
 PROTOTYPE_TOOLS = [
     {
         "name": "get_prd",
-        "description": "读取 PRD 文档内容",
+        "description": (
+            "读取 PRD 文档内容和 PRD 评审报告。"
+            "评审报告中的 missing_scenarios 和 closure_gaps 是原型必须覆盖的场景清单。"
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -212,8 +215,61 @@ PROTOTYPE_TOOLS = [
         }
     },
     {
+        "name": "check_closure",
+        "description": (
+            "在保存原型前，提交闭环自检报告。"
+            "列出所有页面及其入口/出口，并确认所有遗漏场景都已覆盖。"
+            "工具会返回是否通过检查，以及未覆盖的场景列表。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pages": {
+                    "type": "array",
+                    "description": "所有页面的闭环检查信息",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "page_name": {"type": "string"},
+                            "entry_from": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "可以进入这个页面的来源"
+                            },
+                            "exit_to": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "离开这个页面的去向"
+                            },
+                            "states_covered": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "已覆盖的状态：空态/加载中/成功/错误/禁用"
+                            }
+                        },
+                        "required": ["page_name", "entry_from", "exit_to", "states_covered"]
+                    }
+                },
+                "missing_scenarios_coverage": {
+                    "type": "array",
+                    "description": "PRD 评审报告中 missing_scenarios 的覆盖情况",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "scenario": {"type": "string"},
+                            "covered": {"type": "boolean"},
+                            "covered_in_page": {"type": "string", "description": "在哪个页面/弹窗中处理"}
+                        },
+                        "required": ["scenario", "covered"]
+                    }
+                }
+            },
+            "required": ["pages", "missing_scenarios_coverage"]
+        }
+    },
+    {
         "name": "save_prototype",
-        "description": "保存 HTML 原型文件",
+        "description": "保存 HTML 原型文件。只有在 check_closure 通过后才能调用。",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -228,10 +284,14 @@ PROTOTYPE_TOOLS = [
                 },
                 "notes": {
                     "type": "string",
-                    "description": "给评审者的说明"
+                    "description": "给评审者的说明，必须包含闭环检查通过的确认"
+                },
+                "closure_verified": {
+                    "type": "boolean",
+                    "description": "是否已完成闭环检查（必须为 true）"
                 }
             },
-            "required": ["html"]
+            "required": ["html", "closure_verified"]
         }
     }
 ]
