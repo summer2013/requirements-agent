@@ -1,212 +1,133 @@
-# 需求阶段智能体集群 — 架构说明
-
-## 整体架构
-
-```
-用户输入
-  ↓
-main.py（编排器）
-  ↓
-┌───────────────────────────────────────────────────────────────┐
-│  阶段一        阶段二        阶段 2.5       阶段三             │
-│  调研智能体 → 文档智能体 → PRD评审智能体 → 原型智能体        │
-│  research     document     prd_review      prototype           │
-└───────────────────────────────────────────────────────────────┘
-  ↓                  ↓                               ↓
-人工检查点①     人工检查点②                   阶段四：复盘智能体
-                （含评审报告）                        ↓
-                                               知识库（Chroma）
-                                                     ↑
-                                               下次项目开始时读取
-```
+# 需求智能助手（requirements-agent）
+> 一套 AI 智能工作流，能让独立开发者在动手写一行代码之前，就拥有产品经理的产品思维与判断力。
 
 ---
 
-## 文件职责说明
+## 痛点
+我上线过的所有个人项目，上线后都有同样的遗憾：
+
+- “我的删除按钮没有二次确认。有用户误操作清空了整个账号。”
+- “有人填写表单中途离开，20 分钟的内容全部丢失。他们给我发了邮件，我之前完全没想到会发生这种情况。”
+- “这个操作没有撤销功能，我也从来没加过确认弹窗。”
+
+我没有产品经理，没有设计评审，只有自己一个人做所有产品决策。于是我做了这个工具，在问题变成 Bug 之前就提前发现漏洞。
+
+---
+
+## 功能介绍
+基于 Claude 构建的 4 阶段智能工作流：
+
+```
+项目简介
+     │
+     ▼
+┌─────────────────────────────────────────────────────────┐
+│  阶段 1      阶段 2       阶段 2.5      阶段 3          │
+│  需求访谈 → 生成PRD → PRD 自动评审 → 生成原型            │
+└─────────────────────────────────────────────────────────┘
+     │              │                           │
+人工介入 ①      人工介入 ②                  阶段 4：项目复盘
+                (含评审意见)               → 存入知识库
+```
+
+**阶段 1 — 结构化访谈**
+采用“工作待办（JTBD）”式提问，不只了解“做什么”，更搞清楚“为什么做”。系统会自动从知识库中引用过往相似项目的经验。
+
+**阶段 2 — 生成产品需求文档（PRD）**
+输出完整规格文档，包含用户故事、Gherkin 验收标准，以及**核心业务对象的完整状态机**（关键特性）。
+
+**阶段 2.5 — PRD 自动评审**（我最满意的部分）
+在绘制任何原型页面之前，自动从 5 个维度进行检查：
+
+| 检查维度 | 检查内容 |
+|----------|----------|
+| 结构完整性 | 背景、目标、角色、不做范围、异常处理 |
+| 逻辑一致性 | 前置条件、后置状态、操作可撤销性 |
+| 流程闭环 | 无死路页面，所有操作均有反馈 |
+| 场景全覆盖（MECE 原则） | 空数据状态、异常错误、超时、并发编辑 |
+| 多角色协作 | 流程交接、等待状态、通知提醒、超时处理 |
+
+发现的问题会按**严重 / 主要 / 次要**分级标注。
+
+**阶段 3 — HTML 原型**
+生成单文件 HTML 线框图。AI 必须先通过 `check_closure` 校验（系统强制规则，不只是提示词要求），确认无死路页面、所有缺失场景均已覆盖，才能调用 `save_prototype` 保存原型。
+
+**阶段 4 — 项目复盘**
+每个项目结束后，复盘智能助手会对比访谈记录与最终 PRD，提炼经验教训，并写入本地向量数据库。后续新项目可自动复用过往经验。
+
+---
+
+## 两种使用方式
+
+### 方式 A — Claude Projects（免费，无需代码）
+最简单的上手方式。将提示词文件上传到 Claude Projects，通过对话完成全流程 —— 无需 Python、无需 API Key、零配置成本。
+
+**→ 完整配置指南见 [docs/project_guide.md](docs/project_guide.md)**
+
+适用场景：体验试用、偶尔使用、非技术人员。
+
+### 方式 B — Python API（完整工作流）
+本地运行全自动工作流。各阶段自动串联，知识库跨项目持久化，人工检查节点会在终端中提示。
+
+```bash
+# 1. 安装依赖
+pip install anthropic chromadb python-dotenv
+
+# 2. 配置 API 密钥
+cp .env.example .env
+# 编辑 .env 文件 —— 填入 ANTHROPIC_API_KEY（或 OPENROUTER_API_KEY）
+
+# 3. 交互式运行
+python main.py --interactive
+
+# 4. 或直接传参运行
+python main.py --project-name "订单管理系统" \
+               --brief "仓库团队需要管理出库订单……"
+```
+
+适用场景：高频使用、跨项目积累知识库、自动化流程。
+
+---
+
+## 输出文件
+每次通过 API 运行后，会在 `outputs/{项目名}_{时间戳}/` 目录生成文件：
+
+| 文件 | 内容 |
+|------|------|
+| `interview_notes.json` | 结构化访谈记录 |
+| `prd.md` | 含状态机的产品需求文档 |
+| `prd_review_report.json` | 5 维度评审报告（严重/主要/次要） |
+| `prototype.html` | 可交互低保真线框图 |
+| `review.json` | 复盘经验（同时存入知识库） |
+
+---
+
+## 项目结构
 
 ```
 requirements-agent/
-│
-├── main.py                  编排器
-│   职责：控制四个阶段的执行顺序、人工检查点、文件保存
-│   不包含：任何业务逻辑或提示词
-│
-├── agent.py                 通用 agentic loop
-│   职责：发送请求 → 处理 tool_use → 循环直到 end_turn
-│   不包含：任何业务逻辑，可被所有智能体复用
-│
-├── prd_review_agent.py      PRD 评审智能体 ★ v2 新增
-│   职责：从五个维度系统评审 PRD，输出分级问题清单
-│   触发时机：文档智能体保存 PRD 后，原型智能体启动前，自动运行
-│   五个维度：结构完整性 / 逻辑一致性 / 流程闭环 / 场景穷举 / 多角色协同
-│
-├── tool_handlers.py         工具实现层
-│   职责：每个工具实际做什么（读文件、存数据、调外部API）
-│   修改时机：接入真实外部系统时（Confluence、Jira、数据库等）
-│
-├── knowledge_base.py        长期记忆层
-│   职责：向量数据库的读写，历史经验检索
-│   底层：Chroma（本地）/ 可换 Pinecone（云端）
-│
-├── review_agent.py          复盘智能体
-│   职责：对比访谈笔记和PRD，提炼经验，写入知识库
-│   触发时机：每个项目完成后自动运行
-│
-├── prompts/                 提示词（唯一需要产品经理维护的目录）
-│   ├── research_system.txt   调研智能体（v2 未改）
-│   ├── document_system.txt   文档智能体（v2 升级：状态机章节、三类验收场景、强化 checklist）
-│   └── prototype_system.txt  原型智能体（v2 升级：信息架构先行、场景必检清单、闭环约束）
-│
+├── main.py                  流程调度器
+├── agent.py                 通用智能循环（可复用）
+├── prd_review_agent.py      PRD 评审智能助手
+├── review_agent.py          项目复盘智能助手
+├── tool_handlers.py         工具功能实现
+├── knowledge_base.py        本地 Chroma 向量数据库
 ├── tools/
-│   └── definitions.py       工具 Schema（v2 新增 check_closure 工具）
-│
-├── examples/                历史项目示例（手动维护）
-│
-├── kb_data/                 知识库数据（自动生成，勿手动修改）
-│
-└── outputs/                 每次运行的产出（自动生成）
-    └── 项目名_时间戳/
-        ├── interview_notes.json
-        ├── prd.md
-        ├── prd_review_report.json   ★ v2 新增
-        ├── prototype.html
-        └── review.json
+│   └── definitions.py       工具接口定义
+├── prompts/
+│   ├── api/                 Python 工作流提示词
+│   └── projects/            Claude Projects 模式提示词
+└── docs/
+    ├── project_guide.md     Claude Projects 模式分步指南
+    └── architecture.md      系统设计与扩展指南
 ```
 
 ---
 
-## 数据流
-
-### 阶段间数据传递
-
-```
-调研智能体
-  └─ save_interview_notes(JSON)
-        ↓ 存入 state["interview_notes"]
-文档智能体
-  └─ get_interview_notes() 读取
-  └─ save_prd(markdown)
-        ↓ 存入 state["prd_document"]
-PRD 评审智能体                        ★ v2 新增
-  └─ 读取 state["prd_document"] + state["interview_notes"]
-  └─ 输出结构化评审报告
-        ↓ 存入 state["prd_review"]
-原型智能体
-  └─ get_prd() 读取 prd_document + prd_review（同时注入）
-  └─ check_closure() 提交闭环自检（页面出口 + 场景覆盖）
-  └─ save_prototype(html, closure_verified=true)
-        ↓ 存入 state["prototype_html"]
-```
-
-关键设计：每个智能体只接收"上一阶段的结果"，不接收"上一阶段的对话历史"。
-这保证了 context 不会随着阶段积累而膨胀。
-
-PRD 评审报告的传递路径：`prd_review` 通过 `get_prd` 工具随 PRD 正文一并返回给原型智能体，
-原型智能体的 `check_closure` 工具会校验评审中的 critical/major 问题是否都已在原型中覆盖。
-
-### 知识库数据流
-
-```
-项目完成
-  → review_agent 分析访谈笔记 vs PRD
-  → 提炼 lessons_learned + missed_requirements
-  → knowledge_base.save_project() 写入 Chroma
-
-下次项目开始
-  → search_knowledge_base 工具触发
-  → knowledge_base.search_similar_projects() 语义搜索
-  → 返回相似项目摘要 + 经验教训
-  → 注入到调研智能体的当前 context
-```
+## 使用 OpenRouter（可选）
+设置 `OPENROUTER_API_KEY` 而非 `ANTHROPIC_API_KEY`，即可通过 OpenRouter 调用模型。调度器会自动检测存在的密钥并适配对应模型名称。
 
 ---
 
-## 关键设计决策
-
-### 为什么提示词单独放 .txt 文件
-
-提示词的迭代频率远高于代码。产品经理可以直接改 `prompts/` 目录下的文件，不需要懂 Python。
-
-### 为什么 context 不跨阶段传递
-
-文档智能体不需要知道访谈的每一句话，只需要最终的结构化笔记。
-原型智能体不需要知道 PRD 是怎么讨论出来的，只需要最终的 PRD 文本 + 评审摘要。
-"只传结果，不传过程"保证了 context 可控。
-
-### 为什么在原型之前加评审智能体，而不是原型之后
-
-发现问题的成本随阶段递增：访谈修改 < PRD 修改 < 原型修改 < 开发后修改。
-PRD 评审在低成本阶段拦截问题，避免原型带着结构性缺陷进入后续流程。
-评审报告同时作为原型智能体的输入，驱动原型覆盖那些"在 PRD 里被发现但未显式描述"的场景。
-
-### 为什么有 check_closure 工具
-
-原型智能体在生成 HTML 后容易遗漏"空状态""操作后反馈""流程出口"等细节。
-check_closure 工具将检查从提示词约束（模型自觉遵守）升级为工具调用（系统强制验证），
-未通过检查时 save_prototype 直接报错拒绝，消除了依赖模型自律的不确定性。
-
-### 为什么用向量数据库而不是直接把历史文件塞进 context
-
-历史项目积累到 20 个后，全部塞进 context 会超 token 限制，且大量无关内容会干扰模型。
-向量搜索只返回语义最相关的 3 个项目，精准且 token 消耗可控。
-
-### 为什么有复盘智能体
-
-人工很难每次都认真总结经验。复盘智能体强制在每个项目结束后自动运行，
-保证知识库的持续积累不依赖人的自律性。
-
----
-
-## 扩展指南
-
-### 接入外部系统
-
-只需修改 `tool_handlers.py`，其他文件不需要动：
-
-```python
-# 接入 Confluence
-if tool_name == "save_prd":
-    confluence.create_page(title=project_name, body=tool_input["prd_markdown"])
-
-# 接入 Jira
-if tool_name == "save_interview_notes":
-    jira.create_epic(summary=project_name, description=tool_input["summary"])
-
-# 接入飞书文档
-if tool_name == "save_prd":
-    feishu.create_doc(title=project_name, content=tool_input["prd_markdown"])
-```
-
-### 切换模型
-
-在 `main.py` 的 `run_layer_one` 函数里改 `model=` 参数：
-
-```python
-# 换成 GPT-4o（通过 OpenRouter）
-model="openai/gpt-4o"
-
-# 换成免费模型测试
-model="meta-llama/llama-3.3-70b-instruct:free"
-```
-
-### 升级向量数据库
-
-当项目超过 100 个、需要多人共享知识库时，把 Chroma 换成 Pinecone：
-
-```python
-# knowledge_base.py 里替换 _get_client()
-import pinecone
-pinecone.init(api_key=os.environ["PINECONE_API_KEY"])
-```
-
----
-
-## 各智能体参数说明
-
-| 智能体 | 模型 | temperature | max_tokens | 原因 |
-|--------|------|-------------|------------|------|
-| 调研 | claude-opus-4-5 | 0.3 | 4096 | 访谈需要推理能力强，轻微随机让提问更自然 |
-| 文档 | claude-sonnet-4-6 | 0.1 | 8192 | PRD 要稳定一致，几乎不需要随机性 |
-| PRD 评审 | claude-sonnet-4-6 | 0.1 | 4096 | 评审结论要客观一致，低温度减少误报 |
-| 原型 | claude-sonnet-4-6 | 0.2 | 16384 | 代码生成要稳定，需要大 token 窗口 |
-| 复盘 | claude-sonnet-4-6 | 0.2 | 2048 | 分析任务，稳定优先 |
+## 开源协议
+MIT 协议
